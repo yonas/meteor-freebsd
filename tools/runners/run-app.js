@@ -1,5 +1,4 @@
 var _ = require('underscore');
-var Future = require('fibers/future');
 var Fiber = require('fibers');
 var fiberHelpers = require('../utils/fiber-helpers.js');
 var files = require('../fs/files.js');
@@ -372,14 +371,15 @@ var AppRunner = function (options) {
   self.cordovaPlatforms = null;
 
   self.fiber = null;
-  self.startFuture = null;
-  self.runFuture = null;
-  self.exitFuture = null;
-  self.watchFuture = null;
+  self.startPromise = null;
+  self.runPromise = null;
+  self.exitPromise = null;
+  self.watchPromise = null;
+  self._promiseResolvers = {};
 
-  // If this future is set with self.awaitFutureBeforeStart, then for the first
+  // If this promise is set with self.makeBeforeStartPromise, then for the first
   // run, we will wait on it just before self.appProcess.start() is called.
-  self._beforeStartFuture = null;
+  self._beforeStartPromise = null;
   // A hacky state variable that indicates that the proxy process (this process)
   // is communicating to the app process over ipc. If an error in communication
   // occurs, we can distinguish it in a callback handling the 'error' event.
@@ -395,15 +395,39 @@ _.extend(AppRunner.prototype, {
     if (self.fiber)
       throw new Error("already started?");
 
-    self.startFuture = new Future;
-    // XXX I think it's correct to not try to use bindEnvironment here:
-    //     the extra fiber should be independent of this one.
+    self.startPromise = self._makePromise("start");
+
     self.fiber = Fiber(function () {
       self._fiber();
     });
     self.fiber.run();
-    self.startFuture.wait();
-    self.startFuture = null;
+
+    self.startPromise.await();
+    self.startPromise = null;
+  },
+
+  _makePromise: function (name) {
+    var self = this;
+    return new Promise(function (resolve) {
+      self._promiseResolvers[name] = resolve;
+    });
+  },
+
+  _resolvePromise: function (name, value) {
+    var resolve = this._promiseResolvers[name];
+    if (resolve) {
+      this._promiseResolvers[name] = null;
+      resolve(value);
+    }
+  },
+
+  _cleanUpPromises: function () {
+    if (this._promiseResolvers) {
+      _.each(this._promiseResolvers, function (resolve) {
+        resolve && resolve();
+      });
+      this._promiseResolvers = null;
+    }
   },
 
   // Shut down the app. stop() will block until the app is shut
@@ -416,32 +440,32 @@ _.extend(AppRunner.prototype, {
     if (! self.fiber)
       return; // nothing to do
 
-    if (self.exitFuture)
+    if (self.exitPromise)
       throw new Error("another fiber already stopping?");
 
-    // The existence of this future makes the fiber break out of its loop.
-    self.exitFuture = new Future;
+    // The existence of this promise makes the fiber break out of its loop.
+    self.exitPromise = self._makePromise("exit");
 
-    self._runFutureReturn({ outcome: 'stopped' });
-    self._watchFutureReturn();
-    if (self._beforeStartFuture && ! self._beforeStartFuture.isResolved()) {
+    self._resolvePromise("run", { outcome: 'stopped' });
+    self._resolvePromise("watch");
+
+    if (self._beforeStartPromise) {
       // If we stopped before mongod started (eg, due to mongod startup
       // failure), unblock the runner fiber from waiting for mongod to start.
-      self._beforeStartFuture.return(true);
+      self._resolvePromise("beforeStart", true);
     }
-    self.exitFuture.wait();
-    self.exitFuture = null;
+
+    self.exitPromise.await();
+    self.exitPromise = null;
   },
 
-  awaitFutureBeforeStart: function(future) {
-    var self = this;
-    if (self._beforeStartFuture) {
-      throw new Error("awaitFutureBeforeStart called twice?");
-    } else if (future instanceof Future) {
-      self._beforeStartFuture = future;
-    } else {
-      throw new Error("non-Future passed to awaitFutureBeforeStart");
+  // Returns a function that can be called to resolve _beforeStartPromise.
+  makeBeforeStartPromise: function () {
+    if (this._beforeStartPromise) {
+      throw new Error("makeBeforeStartPromise called twice?");
     }
+    this._beforeStartPromise = this._makePromise("beforeStart");
+    return this._promiseResolvers["beforeStart"];
   },
 
   // Run the program once, wait for it to exit, and then return. The
@@ -660,12 +684,12 @@ _.extend(AppRunner.prototype, {
     }
 
     // Atomically (1) see if we've been stop()'d, (2) if not, create a
-    // future that can be used to stop() us once we start running.
-    if (self.exitFuture)
+    // promise that can be used to stop() us once we start running.
+    if (self.exitPromise)
       return { outcome: 'stopped' };
-    if (self.runFuture)
-      throw new Error("already have future?");
-    var runFuture = self.runFuture = new Future;
+    if (self.runPromise)
+      throw new Error("already have promise?");
+    var runPromise = self.runPromise = self._makePromise("run");
 
     // Run the program
     options.beforeRun && options.beforeRun();
@@ -679,7 +703,7 @@ _.extend(AppRunner.prototype, {
       oplogUrl: self.oplogUrl,
       mobileServerUrl: self.mobileServerUrl,
       onExit: function (code, signal) {
-        self._runFutureReturn({
+        self._resolvePromise("run", {
           outcome: 'terminated',
           code: code,
           signal: signal,
@@ -690,8 +714,7 @@ _.extend(AppRunner.prototype, {
       onListen: function () {
         self.proxy.setMode("proxy");
         options.onListen && options.onListen();
-        if (self.startFuture)
-          self.startFuture['return']();
+        self._resolvePromise("start");
       },
       nodeOptions: getNodeOptionsFromEnvironment(),
       nodePath: _.map(bundleResult.nodePath, files.convertToOSPath),
@@ -699,9 +722,8 @@ _.extend(AppRunner.prototype, {
       ipcPipe: self.watchForChanges
     });
 
-    // Empty self._beforeStartFutures and await its elements.
-    if (options.firstRun && self._beforeStartFuture) {
-      var stopped = self._beforeStartFuture.wait();
+    if (options.firstRun && self._beforeStartPromise) {
+      var stopped = self._beforeStartPromise.await();
       if (stopped) {
         return true;
       }
@@ -736,7 +758,7 @@ _.extend(AppRunner.prototype, {
       serverWatcher = new watch.Watcher({
         watchSet: serverWatchSet,
         onChange: function () {
-          self._runFutureReturn({
+          self._resolvePromise("run", {
             outcome: 'changed'
           });
         }
@@ -751,7 +773,7 @@ _.extend(AppRunner.prototype, {
           var outcome = watch.isUpToDate(serverWatchSet)
                       ? 'changed-refreshable' // only a client asset has changed
                       : 'changed'; // both a client and server asset changed
-          self._runFutureReturn({ outcome: outcome });
+          self._resolvePromise('run', { outcome: outcome });
          }
       });
     };
@@ -763,7 +785,7 @@ _.extend(AppRunner.prototype, {
 
     // Wait for either the process to exit, or (if watchForChanges) a
     // source file to change. Or, for stop() to be called.
-    var ret = runFuture.wait();
+    var ret = runPromise.await();
 
     try {
       while (ret.outcome === 'changed-refreshable') {
@@ -779,7 +801,7 @@ _.extend(AppRunner.prototype, {
 
         maybePrintLintWarnings(bundleResult);
 
-        var oldFuture = self.runFuture = new Future;
+        var oldPromise = self.runPromise = self._makePromise("run");
 
         // Notify the server that new client assets have been added to the
         // build.
@@ -793,10 +815,10 @@ _.extend(AppRunner.prototype, {
         runLog.logClientRestart();
 
         // Wait until another file changes.
-        ret = oldFuture.wait();
+        ret = oldPromise.await();
       }
     } finally {
-      self.runFuture = null;
+      self.runPromise = null;
 
       if (ret.outcome === 'changed') {
         runLog.logTemporary("=> Server modified -- restarting...");
@@ -810,24 +832,6 @@ _.extend(AppRunner.prototype, {
     }
 
     return ret;
-  },
-
-  _runFutureReturn: function (value) {
-    var self = this;
-    if (!self.runFuture)
-      return;
-    var runFuture = self.runFuture;
-    self.runFuture = null;
-    runFuture['return'](value);
-  },
-
-  _watchFutureReturn: function () {
-    var self = this;
-    if (!self.watchFuture)
-      return;
-    var watchFuture = self.watchFuture;
-    self.watchFuture = null;
-    watchFuture.return();
   },
 
   _fiber: function () {
@@ -860,7 +864,7 @@ _.extend(AppRunner.prototype, {
         crashCount = 0;
 
       var wantExit = self.onRunEnd ? !self.onRunEnd(runResult) : false;
-      if (wantExit || self.exitFuture || runResult.outcome === "stopped")
+      if (wantExit || self.exitPromise || runResult.outcome === "stopped")
         break;
 
       if (runResult.outcome === "wrong-release" ||
@@ -912,7 +916,7 @@ _.extend(AppRunner.prototype, {
       }
 
       if (self.watchForChanges) {
-        self.watchFuture = new Future;
+        self.watchPromise = self._makePromise("watch");
 
         if (!runResult.watchSet)
           throw Error("watching for changes with no watchSet?");
@@ -920,15 +924,15 @@ _.extend(AppRunner.prototype, {
         var watcher = new watch.Watcher({
           watchSet: runResult.watchSet,
           onChange: function () {
-            self._watchFutureReturn();
+            self._resolvePromise("watch");
           }
         });
         self.proxy.setMode("errorpage");
-        // If onChange wasn't called synchronously (clearing watchFuture), wait
+        // If onChange wasn't called synchronously (clearing watchPromise), wait
         // on it.
-        self.watchFuture && self.watchFuture.wait();
+        self.watchPromise && self.watchPromise.await();
         // While we were waiting, did somebody stop() us?
-        if (self.exitFuture)
+        if (self.exitPromise)
           break;
         runLog.log("Modified -- restarting.",  { arrow: true });
         Console.enableProgressDisplay(true);
@@ -939,10 +943,7 @@ _.extend(AppRunner.prototype, {
     }
 
     // Giving up for good.
-    if (self.exitFuture)
-      self.exitFuture['return']();
-    if (self.startFuture)
-      self.startFuture['return']();
+    self._cleanUpPromises();
 
     self.fiber = null;
   }
