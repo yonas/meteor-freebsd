@@ -1,4 +1,3 @@
-var Future = require('fibers/future');
 var _ = require('underscore');
 var child_process = require('child_process');
 var Console = require('../console/console.js').Console;
@@ -20,7 +19,11 @@ var RunCommand = function (command, args, options) {
   self.args = args;
   self.options = options;
 
-  self.exitFuture = new Future();
+  self.exitPromise = new Promise(function (resolve, reject) {
+    self._exitNormally = resolve;
+    self._exitWithError = reject;
+  });
+
   self.exitCode = undefined;
 
   self.stdout = '';
@@ -57,13 +60,13 @@ _.extend(RunCommand.prototype, {
         console.log("Unexpected exit code", exitCode, "from", self.command, self.args, "\nstdout:\n", self.stdout, "\nstderr:\n", self.stderr);
       }
 
-      self.exitFuture.isResolved() || self.exitFuture['return'](exitCode);
+      self._exitNormally(exitCode);
     });
 
     self.process.on('error', function (err) {
       Console.debug("Error while running command", err);
       self.exitError = err;
-      self.exitFuture.isResolved() || self.exitFuture['throw'](err);
+      self._exitWithError(err);
     });
 
     self.process.stdout.on('data', function (data) {
@@ -99,7 +102,7 @@ _.extend(RunCommand.prototype, {
 
   waitForExit: function () {
     var self = this;
-    return self.exitFuture.wait();
+    return self.exitPromise.await();
   },
 
   kill: function () {
