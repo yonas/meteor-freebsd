@@ -663,12 +663,12 @@ _.extend(Connection.prototype, {
    * @param {EJSONable} [arg1,arg2...] Optional method arguments
    * @param {Function} [asyncCallback] Optional callback, which is called asynchronously with the error or result after the method is complete. If not provided, the method runs synchronously if possible (see below).
    */
-  call: function (name /* .. [arguments] .. callback */) {
-    // if it's a function, the last argument is the result callback,
-    // not a parameter to the remote method.
-    var args = Array.prototype.slice.call(arguments, 1);
-    if (args.length && typeof args[args.length - 1] === "function")
+  call(name, ...args) {
+    if (args.length && typeof args[args.length - 1] === "function") {
+      // If it's a function, the last argument is the result callback,
+      // not a parameter to the remote method.
       var callback = args.pop();
+    }
     return this.apply(name, args, callback);
   },
 
@@ -704,7 +704,7 @@ _.extend(Connection.prototype, {
    * @param {Function} options.onResultReceived (Client only) This callback is invoked with the error or result of the method (just like `asyncCallback`) as soon as the error or result is available. The local cache may not yet reflect the writes performed by the method.
    * @param {Function} [asyncCallback] Optional callback; same semantics as in [`Meteor.call`](#meteor_call).
    */
-  apply: function (name, args, options, callback) {
+  apply(name, args, options, callback) {
     var self = this;
 
     // We were passed 3 arguments. They may be either (name, args, options)
