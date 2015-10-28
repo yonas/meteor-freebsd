@@ -454,56 +454,28 @@ var convertRegexpToMongoSelector = function (regexp) {
  * @param {Function} [callback] Optional.  If present, called with an error object as its argument.
  */
 
-_.each(["insert", "update", "remove"], function (name) {
+_.each(["update", "remove"], function (name) {
   Mongo.Collection.prototype[name] = function (...args) {
     const callback = popCallbackFromArgs(args);
-    var insertId;
-    var ret;
+    let ret;
 
-    if (name === "insert") {
-      if (!args.length)
-        throw new Error("insert requires an argument");
-      // shallow-copy the document and generate an ID
-      args[0] = _.extend({}, args[0]);
-      if ('_id' in args[0]) {
-        insertId = args[0]._id;
-        if (!insertId || !(typeof insertId === 'string'
-              || insertId instanceof Mongo.ObjectID))
-          throw new Error("Meteor requires document _id fields to be non-empty strings or ObjectIDs");
-      } else {
-        var generateId = true;
-        // Don't generate the id if we're the client and the 'outermost' call
-        // This optimization saves us passing both the randomSeed and the id
-        // Passing both is redundant.
-        if (this._connection && this._connection !== Meteor.server) {
-          var enclosing = DDP._CurrentInvocation.get();
-          if (!enclosing) {
-            generateId = false;
-          }
-        }
-        if (generateId) {
-          insertId = args[0]._id = this._makeNewID();
-        }
-      }
-    } else {
-      // Not insert, so the first argument is a selector
-      args[0] = Mongo.Collection._rewriteSelector(args[0]);
+    // Not insert, so the first argument is a selector
+    args[0] = Mongo.Collection._rewriteSelector(args[0]);
 
-      if (name === "update") {
-        // Mutate args but copy the original options object. We need to add
-        // insertedId to options, but don't want to mutate the caller's options
-        // object. We need to mutate `args` because we pass `args` into the
-        // driver below.
-        var options = args[2] = _.clone(args[2]) || {};
-        if (options && typeof options !== "function" && options.upsert) {
-          // set `insertedId` if absent.  `insertedId` is a Meteor extension.
-          if (options.insertedId) {
-            if (!(typeof options.insertedId === 'string'
-                  || options.insertedId instanceof Mongo.ObjectID))
-              throw new Error("insertedId must be string or ObjectID");
-          } else if (! args[0]._id) {
-            options.insertedId = this._makeNewID();
-          }
+    if (name === "update") {
+      // Mutate args but copy the original options object. We need to add
+      // insertedId to options, but don't want to mutate the caller's options
+      // object. We need to mutate `args` because we pass `args` into the
+      // driver below.
+      var options = args[2] = _.clone(args[2]) || {};
+      if (options && typeof options !== "function" && options.upsert) {
+        // set `insertedId` if absent.  `insertedId` is a Meteor extension.
+        if (options.insertedId) {
+          if (!(typeof options.insertedId === 'string'
+                || options.insertedId instanceof Mongo.ObjectID))
+            throw new Error("insertedId must be string or ObjectID");
+        } else if (! args[0]._id) {
+          options.insertedId = this._makeNewID();
         }
       }
     }
@@ -511,14 +483,7 @@ _.each(["insert", "update", "remove"], function (name) {
     // On inserts, always return the id that we generated; on all other
     // operations, just return the result from the collection.
     var chooseReturnValueFromCollectionResult = function (result) {
-      if (name === "insert") {
-        if (!insertId && result) {
-          insertId = result;
-        }
-        return insertId;
-      } else {
-        return result;
-      }
+      return result;
     };
 
     var wrappedCallback;
@@ -551,7 +516,7 @@ _.each(["insert", "update", "remove"], function (name) {
         };
       }
 
-      if (!alreadyInSimulation && name !== "insert") {
+      if (!alreadyInSimulation) {
         // If we're about to actually send an RPC, we should throw an error if
         // this is a non-ID selector, because the mutation methods only allow
         // single-ID selectors. (If we don't throw here, we'll see flicker.)
@@ -588,6 +553,118 @@ _.each(["insert", "update", "remove"], function (name) {
     return ret;
   };
 });
+
+Mongo.Collection.prototype.insert = function insert(doc, callback) {
+  let ret;
+
+  // Make sure we were passed a document to insert
+  if (!doc) {
+    throw new Error("insert requires an argument");
+  }
+
+  // Shallow-copy the document and possibly generate an ID
+  doc = _.extend({}, doc);
+
+  if ('_id' in doc) {
+    if (!doc._id || !(typeof doc._id === 'string'
+          || doc._id instanceof Mongo.ObjectID)) {
+      throw new Error("Meteor requires document _id fields to be non-empty strings or ObjectIDs");
+    }
+  } else {
+    let generateId = true;
+
+    // Don't generate the id if we're the client and the 'outermost' call
+    // This optimization saves us passing both the randomSeed and the id
+    // Passing both is redundant.
+    if (this._connection && this._connection !== Meteor.server) {
+      const enclosing = DDP._CurrentInvocation.get();
+      if (!enclosing) {
+        generateId = false;
+      }
+    }
+
+    if (generateId) {
+      doc._id = doc._id = this._makeNewID();
+    }
+  }
+
+  // On inserts, always return the id that we generated; on all other
+  // operations, just return the result from the collection.
+  var chooseReturnValueFromCollectionResult = function (result) {
+    if (doc._id) {
+      return doc._id;
+    }
+
+    // XXX what is this for??
+    doc._id = result;
+
+    return result;
+  };
+
+  var wrappedCallback;
+  if (callback) {
+    wrappedCallback = function (error, result) {
+      callback(error, ! error && chooseReturnValueFromCollectionResult(result));
+    };
+  }
+
+  // XXX see #MeteorServerNull
+  if (this._connection && this._connection !== Meteor.server) {
+    // just remote to another endpoint, propagate return value or
+    // exception.
+
+    const enclosing = DDP._CurrentInvocation.get();
+    const alreadyInSimulation = enclosing && enclosing.isSimulation;
+
+    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
+      // Client can't block, so it can't report errors by exception,
+      // only by callback. If they forget the callback, give them a
+      // default one that logs the error, so they aren't totally
+      // baffled if their writes don't work because their database is
+      // down.
+      // Don't give a default callback in simulation, because inside stubs we
+      // want to return the results from the local collection immediately and
+      // not force a callback.
+      wrappedCallback = function (err) {
+        if (err)
+          Meteor._debug(name + " failed: " + (err.reason || err.stack));
+      };
+    }
+
+    // Call mutator method
+    const mutatorMethodName = this._prefix + "insert";
+    const result = this._connection.apply(
+      mutatorMethodName,
+      [doc],
+      { returnStubValue: true },
+      wrappedCallback
+    );
+
+    ret = chooseReturnValueFromCollectionResult(result);
+  } else {
+    // it's my collection.  descend into the collection object
+    // and propagate any exception.
+
+    try {
+      // If the user provided a callback and the collection implements this
+      // operation asynchronously, then queryRet will be undefined, and the
+      // result will be returned through the callback instead.
+      const result = this._collection.insert(doc, wrappedCallback);
+      ret = chooseReturnValueFromCollectionResult(result);
+    } catch (e) {
+      if (callback) {
+        callback(e);
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  // both sync and async, unless we threw an exception, return ret
+  // (new document ID for insert, num affected for update/remove, object with
+  // numberAffected and maybe insertedId for upsert).
+  return ret;
+}
 
 /**
  * @summary Modify one or more documents in the collection, or insert one if no matching documents were found. Returns an object with keys `numberAffected` (the number of documents modified)  and `insertedId` (the unique _id of the document that was inserted, if any).
