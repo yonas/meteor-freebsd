@@ -455,20 +455,10 @@ var convertRegexpToMongoSelector = function (regexp) {
  */
 
 _.each(["insert", "update", "remove"], function (name) {
-  Mongo.Collection.prototype[name] = function (/* arguments */) {
-    var self = this;
-    var args = _.toArray(arguments);
-    var callback;
+  Mongo.Collection.prototype[name] = function (...args) {
+    const callback = popCallbackFromArgs(args);
     var insertId;
     var ret;
-
-    // Pull off any callback (or perhaps a 'callback' variable that was passed
-    // in undefined, like how 'upsert' does it).
-    if (args.length &&
-        (args[args.length - 1] === undefined ||
-         args[args.length - 1] instanceof Function)) {
-      callback = args.pop();
-    }
 
     if (name === "insert") {
       if (!args.length)
@@ -485,17 +475,18 @@ _.each(["insert", "update", "remove"], function (name) {
         // Don't generate the id if we're the client and the 'outermost' call
         // This optimization saves us passing both the randomSeed and the id
         // Passing both is redundant.
-        if (self._connection && self._connection !== Meteor.server) {
+        if (this._connection && this._connection !== Meteor.server) {
           var enclosing = DDP._CurrentInvocation.get();
           if (!enclosing) {
             generateId = false;
           }
         }
         if (generateId) {
-          insertId = args[0]._id = self._makeNewID();
+          insertId = args[0]._id = this._makeNewID();
         }
       }
     } else {
+      // Not insert, so the first argument is a selector
       args[0] = Mongo.Collection._rewriteSelector(args[0]);
 
       if (name === "update") {
@@ -511,7 +502,7 @@ _.each(["insert", "update", "remove"], function (name) {
                   || options.insertedId instanceof Mongo.ObjectID))
               throw new Error("insertedId must be string or ObjectID");
           } else if (! args[0]._id) {
-            options.insertedId = self._makeNewID();
+            options.insertedId = this._makeNewID();
           }
         }
       }
@@ -538,12 +529,12 @@ _.each(["insert", "update", "remove"], function (name) {
     }
 
     // XXX see #MeteorServerNull
-    if (self._connection && self._connection !== Meteor.server) {
+    if (this._connection && this._connection !== Meteor.server) {
       // just remote to another endpoint, propagate return value or
       // exception.
 
-      var enclosing = DDP._CurrentInvocation.get();
-      var alreadyInSimulation = enclosing && enclosing.isSimulation;
+      const enclosing = DDP._CurrentInvocation.get();
+      const alreadyInSimulation = enclosing && enclosing.isSimulation;
 
       if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
         // Client can't block, so it can't report errors by exception,
@@ -567,10 +558,11 @@ _.each(["insert", "update", "remove"], function (name) {
         AllowDeny.throwIfSelectorIsNotId(args[0], name);
       }
 
-      ret = chooseReturnValueFromCollectionResult(
-        self._connection.apply(self._prefix + name, args, {returnStubValue: true}, wrappedCallback)
-      );
+      const mutatorMethodName = this._prefix + name;
+      const result = this._connection.apply(
+        mutatorMethodName, args, { returnStubValue: true }, wrappedCallback);
 
+      ret = chooseReturnValueFromCollectionResult(result);
     } else {
       // it's my collection.  descend into the collection object
       // and propagate any exception.
@@ -579,8 +571,8 @@ _.each(["insert", "update", "remove"], function (name) {
         // If the user provided a callback and the collection implements this
         // operation asynchronously, then queryRet will be undefined, and the
         // result will be returned through the callback instead.
-        var queryRet = self._collection[name].apply(self._collection, args);
-        ret = chooseReturnValueFromCollectionResult(queryRet);
+        const result = this._collection[name].apply(this._collection, args);
+        ret = chooseReturnValueFromCollectionResult(result);
       } catch (e) {
         if (callback) {
           callback(e);
@@ -702,3 +694,13 @@ Meteor.Collection = Mongo.Collection;
 
 // Allow deny stuff is now in the allow-deny package
 _.extend(Meteor.Collection.prototype, AllowDeny.CollectionPrototype);
+
+function popCallbackFromArgs(args) {
+  // Pull off any callback (or perhaps a 'callback' variable that was passed
+  // in undefined, like how 'upsert' does it).
+  if (args.length &&
+      (args[args.length - 1] === undefined ||
+       args[args.length - 1] instanceof Function)) {
+    return args.pop();
+  }
+}
