@@ -455,8 +455,6 @@ var convertRegexpToMongoSelector = function (regexp) {
  */
 
 Mongo.Collection.prototype.insert = function insert(doc, callback) {
-  let ret;
-
   // Make sure we were passed a document to insert
   if (!doc) {
     throw new Error("insert requires an argument");
@@ -509,7 +507,7 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
   }
 
   // XXX see #MeteorServerNull
-  if (this._connection && this._connection !== Meteor.server) {
+  if (this._isRemoteCollection()) {
     // just remote to another endpoint, propagate return value or
     // exception.
 
@@ -537,35 +535,28 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
       wrappedCallback
     );
 
-    ret = chooseReturnValueFromCollectionResult(result);
-  } else {
-    // it's my collection.  descend into the collection object
-    // and propagate any exception.
-
-    try {
-      // If the user provided a callback and the collection implements this
-      // operation asynchronously, then queryRet will be undefined, and the
-      // result will be returned through the callback instead.
-      const result = this._collection.insert(doc, wrappedCallback);
-      ret = chooseReturnValueFromCollectionResult(result);
-    } catch (e) {
-      if (callback) {
-        callback(e);
-        return null;
-      }
-      throw e;
-    }
+    return chooseReturnValueFromCollectionResult(result);
   }
 
-  // both sync and async, unless we threw an exception, return ret
-  // (new document ID for insert, num affected for update/remove, object with
-  // numberAffected and maybe insertedId for upsert).
-  return ret;
+  // it's my collection.  descend into the collection object
+  // and propagate any exception.
+  try {
+    // If the user provided a callback and the collection implements this
+    // operation asynchronously, then queryRet will be undefined, and the
+    // result will be returned through the callback instead.
+    const result = this._collection.insert(doc, wrappedCallback);
+    return chooseReturnValueFromCollectionResult(result);
+  } catch (e) {
+    if (callback) {
+      callback(e);
+      return null;
+    }
+    throw e;
+  }
 }
 
 Mongo.Collection.prototype.update = function update(selector, modifier, ...optionsAndCallback) {
   const callback = popCallbackFromArgs(optionsAndCallback);
-  let ret;
 
   selector = Mongo.Collection._rewriteSelector(selector);
 
@@ -591,7 +582,7 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
   }
 
   // XXX see #MeteorServerNull
-  if (this._connection && this._connection !== Meteor.server) {
+  if (this._isRemoteCollection()) {
     // just remote to another endpoint, propagate return value or
     // exception.
 
@@ -624,36 +615,28 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
       options
     ];
 
-    ret = this._connection.apply(
+    return this._connection.apply(
       mutatorMethodName, args, { returnStubValue: true }, wrappedCallback);
-  } else {
-    // it's my collection.  descend into the collection object
-    // and propagate any exception.
-    try {
-      // If the user provided a callback and the collection implements this
-      // operation asynchronously, then queryRet will be undefined, and the
-      // result will be returned through the callback instead.
-      ret = this._collection.update(
-        selector, modifier, options, wrappedCallback);
-    } catch (e) {
-      if (callback) {
-        callback(e);
-        return null;
-      }
-      throw e;
-    }
   }
 
-  // both sync and async, unless we threw an exception, return ret
-  // (new document ID for insert, num affected for update/remove, object with
-  // numberAffected and maybe insertedId for upsert).
-  return ret;
+  // it's my collection.  descend into the collection object
+  // and propagate any exception.
+  try {
+    // If the user provided a callback and the collection implements this
+    // operation asynchronously, then queryRet will be undefined, and the
+    // result will be returned through the callback instead.
+    return this._collection.update(
+      selector, modifier, options, wrappedCallback);
+  } catch (e) {
+    if (callback) {
+      callback(e);
+      return null;
+    }
+    throw e;
+  }
 }
 
 Mongo.Collection.prototype.remove = function remove(selector, callback) {
-  let ret;
-
-  // Not insert, so the first argument is a selector
   selector = Mongo.Collection._rewriteSelector(selector);
 
   var wrappedCallback;
@@ -664,7 +647,7 @@ Mongo.Collection.prototype.remove = function remove(selector, callback) {
   }
 
   // XXX see #MeteorServerNull
-  if (this._connection && this._connection !== Meteor.server) {
+  if (this._isRemoteCollection()) {
     // just remote to another endpoint, propagate return value or
     // exception.
 
@@ -691,35 +674,36 @@ Mongo.Collection.prototype.remove = function remove(selector, callback) {
     }
 
     const mutatorMethodName = this._prefix + "remove";
-    ret = this._connection.apply(
+    return this._connection.apply(
       mutatorMethodName, [selector], { returnStubValue: true }, wrappedCallback);
-  } else {
-    // it's my collection.  descend into the collection object
-    // and propagate any exception.
-    try {
-      // If the user provided a callback and the collection implements this
-      // operation asynchronously, then queryRet will be undefined, and the
-      // result will be returned through the callback instead.
-      ret = this._collection.remove(selector, wrappedCallback);
-    } catch (e) {
-      if (callback) {
-        callback(e);
-        return null;
-      }
-      throw e;
-    }
   }
 
-  // both sync and async, unless we threw an exception, return ret
-  // (new document ID for insert, num affected for update/remove, object with
-  // numberAffected and maybe insertedId for upsert).
-  return ret;
+  // it's my collection.  descend into the collection object
+  // and propagate any exception.
+  try {
+    // If the user provided a callback and the collection implements this
+    // operation asynchronously, then queryRet will be undefined, and the
+    // result will be returned through the callback instead.
+    return this._collection.remove(selector, wrappedCallback);
+  } catch (e) {
+    if (callback) {
+      callback(e);
+      return null;
+    }
+    throw e;
+  }
 };
 
 // Determine if we are in a DDP method simulation
 function alreadyInSimulation() {
   const enclosing = DDP._CurrentInvocation.get();
   return enclosing && enclosing.isSimulation;
+}
+
+// Determine if this collection is simply a minimongo representation of a real
+// database on another server
+Mongo.Collection.prototype._isRemoteCollection = function _isRemoteCollection() {
+  return this._connection && this._connection !== Meteor.server;
 }
 
 /**
