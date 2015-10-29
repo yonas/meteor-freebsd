@@ -454,105 +454,74 @@ var convertRegexpToMongoSelector = function (regexp) {
  * @param {Function} [callback] Optional.  If present, called with an error object as its argument.
  */
 
-_.each(["remove"], function (name) {
-  Mongo.Collection.prototype[name] = function (...args) {
-    const callback = popCallbackFromArgs(args);
-    let ret;
+Mongo.Collection.prototype.remove = function remove(selector, callback) {
+  let ret;
 
-    // Not insert, so the first argument is a selector
-    args[0] = Mongo.Collection._rewriteSelector(args[0]);
+  // Not insert, so the first argument is a selector
+  selector = Mongo.Collection._rewriteSelector(selector);
 
-    if (name === "update") {
-      // Mutate args but copy the original options object. We need to add
-      // insertedId to options, but don't want to mutate the caller's options
-      // object. We need to mutate `args` because we pass `args` into the
-      // driver below.
-      var options = args[2] = _.clone(args[2]) || {};
-      if (options && typeof options !== "function" && options.upsert) {
-        // set `insertedId` if absent.  `insertedId` is a Meteor extension.
-        if (options.insertedId) {
-          if (!(typeof options.insertedId === 'string'
-                || options.insertedId instanceof Mongo.ObjectID))
-            throw new Error("insertedId must be string or ObjectID");
-        } else if (! args[0]._id) {
-          options.insertedId = this._makeNewID();
-        }
-      }
-    }
-
-    // On inserts, always return the id that we generated; on all other
-    // operations, just return the result from the collection.
-    var chooseReturnValueFromCollectionResult = function (result) {
-      return result;
+  var wrappedCallback;
+  if (callback) {
+    wrappedCallback = function (error, result) {
+      callback(error, ! error && result);
     };
+  }
 
-    var wrappedCallback;
-    if (callback) {
-      wrappedCallback = function (error, result) {
-        callback(error, ! error && chooseReturnValueFromCollectionResult(result));
+  // XXX see #MeteorServerNull
+  if (this._connection && this._connection !== Meteor.server) {
+    // just remote to another endpoint, propagate return value or
+    // exception.
+
+    const enclosing = DDP._CurrentInvocation.get();
+    const alreadyInSimulation = enclosing && enclosing.isSimulation;
+
+    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
+      // Client can't block, so it can't report errors by exception,
+      // only by callback. If they forget the callback, give them a
+      // default one that logs the error, so they aren't totally
+      // baffled if their writes don't work because their database is
+      // down.
+      // Don't give a default callback in simulation, because inside stubs we
+      // want to return the results from the local collection immediately and
+      // not force a callback.
+      wrappedCallback = function (err) {
+        if (err)
+          Meteor._debug(name + " failed: " + (err.reason || err.stack));
       };
     }
 
-    // XXX see #MeteorServerNull
-    if (this._connection && this._connection !== Meteor.server) {
-      // just remote to another endpoint, propagate return value or
-      // exception.
-
-      const enclosing = DDP._CurrentInvocation.get();
-      const alreadyInSimulation = enclosing && enclosing.isSimulation;
-
-      if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
-        // Client can't block, so it can't report errors by exception,
-        // only by callback. If they forget the callback, give them a
-        // default one that logs the error, so they aren't totally
-        // baffled if their writes don't work because their database is
-        // down.
-        // Don't give a default callback in simulation, because inside stubs we
-        // want to return the results from the local collection immediately and
-        // not force a callback.
-        wrappedCallback = function (err) {
-          if (err)
-            Meteor._debug(name + " failed: " + (err.reason || err.stack));
-        };
-      }
-
-      if (!alreadyInSimulation) {
-        // If we're about to actually send an RPC, we should throw an error if
-        // this is a non-ID selector, because the mutation methods only allow
-        // single-ID selectors. (If we don't throw here, we'll see flicker.)
-        AllowDeny.throwIfSelectorIsNotId(args[0], name);
-      }
-
-      const mutatorMethodName = this._prefix + name;
-      const result = this._connection.apply(
-        mutatorMethodName, args, { returnStubValue: true }, wrappedCallback);
-
-      ret = chooseReturnValueFromCollectionResult(result);
-    } else {
-      // it's my collection.  descend into the collection object
-      // and propagate any exception.
-      args.push(wrappedCallback);
-      try {
-        // If the user provided a callback and the collection implements this
-        // operation asynchronously, then queryRet will be undefined, and the
-        // result will be returned through the callback instead.
-        const result = this._collection[name].apply(this._collection, args);
-        ret = chooseReturnValueFromCollectionResult(result);
-      } catch (e) {
-        if (callback) {
-          callback(e);
-          return null;
-        }
-        throw e;
-      }
+    if (!alreadyInSimulation) {
+      // If we're about to actually send an RPC, we should throw an error if
+      // this is a non-ID selector, because the mutation methods only allow
+      // single-ID selectors. (If we don't throw here, we'll see flicker.)
+      AllowDeny.throwIfSelectorIsNotId(selector, "remove");
     }
 
-    // both sync and async, unless we threw an exception, return ret
-    // (new document ID for insert, num affected for update/remove, object with
-    // numberAffected and maybe insertedId for upsert).
-    return ret;
-  };
-});
+    const mutatorMethodName = this._prefix + "remove";
+    ret = this._connection.apply(
+      mutatorMethodName, [selector], { returnStubValue: true }, wrappedCallback);
+  } else {
+    // it's my collection.  descend into the collection object
+    // and propagate any exception.
+    try {
+      // If the user provided a callback and the collection implements this
+      // operation asynchronously, then queryRet will be undefined, and the
+      // result will be returned through the callback instead.
+      ret = this._collection.remove(selector, wrappedCallback);
+    } catch (e) {
+      if (callback) {
+        callback(e);
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  // both sync and async, unless we threw an exception, return ret
+  // (new document ID for insert, num affected for update/remove, object with
+  // numberAffected and maybe insertedId for upsert).
+  return ret;
+};
 
 Mongo.Collection.prototype.insert = function insert(doc, callback) {
   let ret;
