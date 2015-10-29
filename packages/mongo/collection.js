@@ -454,75 +454,6 @@ var convertRegexpToMongoSelector = function (regexp) {
  * @param {Function} [callback] Optional.  If present, called with an error object as its argument.
  */
 
-Mongo.Collection.prototype.remove = function remove(selector, callback) {
-  let ret;
-
-  // Not insert, so the first argument is a selector
-  selector = Mongo.Collection._rewriteSelector(selector);
-
-  var wrappedCallback;
-  if (callback) {
-    wrappedCallback = function (error, result) {
-      callback(error, ! error && result);
-    };
-  }
-
-  // XXX see #MeteorServerNull
-  if (this._connection && this._connection !== Meteor.server) {
-    // just remote to another endpoint, propagate return value or
-    // exception.
-
-    const enclosing = DDP._CurrentInvocation.get();
-    const alreadyInSimulation = enclosing && enclosing.isSimulation;
-
-    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
-      // Client can't block, so it can't report errors by exception,
-      // only by callback. If they forget the callback, give them a
-      // default one that logs the error, so they aren't totally
-      // baffled if their writes don't work because their database is
-      // down.
-      // Don't give a default callback in simulation, because inside stubs we
-      // want to return the results from the local collection immediately and
-      // not force a callback.
-      wrappedCallback = function (err) {
-        if (err)
-          Meteor._debug(name + " failed: " + (err.reason || err.stack));
-      };
-    }
-
-    if (!alreadyInSimulation) {
-      // If we're about to actually send an RPC, we should throw an error if
-      // this is a non-ID selector, because the mutation methods only allow
-      // single-ID selectors. (If we don't throw here, we'll see flicker.)
-      AllowDeny.throwIfSelectorIsNotId(selector, "remove");
-    }
-
-    const mutatorMethodName = this._prefix + "remove";
-    ret = this._connection.apply(
-      mutatorMethodName, [selector], { returnStubValue: true }, wrappedCallback);
-  } else {
-    // it's my collection.  descend into the collection object
-    // and propagate any exception.
-    try {
-      // If the user provided a callback and the collection implements this
-      // operation asynchronously, then queryRet will be undefined, and the
-      // result will be returned through the callback instead.
-      ret = this._collection.remove(selector, wrappedCallback);
-    } catch (e) {
-      if (callback) {
-        callback(e);
-        return null;
-      }
-      throw e;
-    }
-  }
-
-  // both sync and async, unless we threw an exception, return ret
-  // (new document ID for insert, num affected for update/remove, object with
-  // numberAffected and maybe insertedId for upsert).
-  return ret;
-};
-
 Mongo.Collection.prototype.insert = function insert(doc, callback) {
   let ret;
 
@@ -582,10 +513,7 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
     // just remote to another endpoint, propagate return value or
     // exception.
 
-    const enclosing = DDP._CurrentInvocation.get();
-    const alreadyInSimulation = enclosing && enclosing.isSimulation;
-
-    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
+    if (Meteor.isClient && !wrappedCallback && !alreadyInSimulation()) {
       // Client can't block, so it can't report errors by exception,
       // only by callback. If they forget the callback, give them a
       // default one that logs the error, so they aren't totally
@@ -667,10 +595,7 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
     // just remote to another endpoint, propagate return value or
     // exception.
 
-    const enclosing = DDP._CurrentInvocation.get();
-    const alreadyInSimulation = enclosing && enclosing.isSimulation;
-
-    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation) {
+    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation()) {
       // Client can't block, so it can't report errors by exception,
       // only by callback. If they forget the callback, give them a
       // default one that logs the error, so they aren't totally
@@ -685,7 +610,7 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
       };
     }
 
-    if (!alreadyInSimulation) {
+    if (!alreadyInSimulation()) {
       // If we're about to actually send an RPC, we should throw an error if
       // this is a non-ID selector, because the mutation methods only allow
       // single-ID selectors. (If we don't throw here, we'll see flicker.)
@@ -723,6 +648,78 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
   // (new document ID for insert, num affected for update/remove, object with
   // numberAffected and maybe insertedId for upsert).
   return ret;
+}
+
+Mongo.Collection.prototype.remove = function remove(selector, callback) {
+  let ret;
+
+  // Not insert, so the first argument is a selector
+  selector = Mongo.Collection._rewriteSelector(selector);
+
+  var wrappedCallback;
+  if (callback) {
+    wrappedCallback = function (error, result) {
+      callback(error, ! error && result);
+    };
+  }
+
+  // XXX see #MeteorServerNull
+  if (this._connection && this._connection !== Meteor.server) {
+    // just remote to another endpoint, propagate return value or
+    // exception.
+
+    if (Meteor.isClient && !wrappedCallback && !alreadyInSimulation()) {
+      // Client can't block, so it can't report errors by exception,
+      // only by callback. If they forget the callback, give them a
+      // default one that logs the error, so they aren't totally
+      // baffled if their writes don't work because their database is
+      // down.
+      // Don't give a default callback in simulation, because inside stubs we
+      // want to return the results from the local collection immediately and
+      // not force a callback.
+      wrappedCallback = function (err) {
+        if (err)
+          Meteor._debug(name + " failed: " + (err.reason || err.stack));
+      };
+    }
+
+    if (!alreadyInSimulation()) {
+      // If we're about to actually send an RPC, we should throw an error if
+      // this is a non-ID selector, because the mutation methods only allow
+      // single-ID selectors. (If we don't throw here, we'll see flicker.)
+      AllowDeny.throwIfSelectorIsNotId(selector, "remove");
+    }
+
+    const mutatorMethodName = this._prefix + "remove";
+    ret = this._connection.apply(
+      mutatorMethodName, [selector], { returnStubValue: true }, wrappedCallback);
+  } else {
+    // it's my collection.  descend into the collection object
+    // and propagate any exception.
+    try {
+      // If the user provided a callback and the collection implements this
+      // operation asynchronously, then queryRet will be undefined, and the
+      // result will be returned through the callback instead.
+      ret = this._collection.remove(selector, wrappedCallback);
+    } catch (e) {
+      if (callback) {
+        callback(e);
+        return null;
+      }
+      throw e;
+    }
+  }
+
+  // both sync and async, unless we threw an exception, return ret
+  // (new document ID for insert, num affected for update/remove, object with
+  // numberAffected and maybe insertedId for upsert).
+  return ret;
+};
+
+// Determine if we are in a DDP method simulation
+function alreadyInSimulation() {
+  const enclosing = DDP._CurrentInvocation.get();
+  return enclosing && enclosing.isSimulation;
 }
 
 /**
