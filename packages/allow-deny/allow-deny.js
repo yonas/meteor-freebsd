@@ -43,6 +43,9 @@ const CollectionPrototype = AllowDeny.CollectionPrototype;
 /**
  * @summary Allow users to write directly to this collection from client code, subject to limitations you define.
  * @locus Server
+ * @method allow
+ * @memberOf Mongo.Collection
+ * @instance
  * @param {Object} options
  * @param {Function} options.insert,update,remove Functions that look at a proposed modification to the database and return true if it should be allowed.
  * @param {String[]} options.fetch Optional performance enhancement. Limits the fields that will be fetched from the database for inspection by your `update` and `remove` functions.
@@ -55,6 +58,9 @@ CollectionPrototype.allow = function(options) {
 /**
  * @summary Override `allow` rules.
  * @locus Server
+ * @method deny
+ * @memberOf Mongo.Collection
+ * @instance
  * @param {Object} options
  * @param {Function} options.insert,update,remove Functions that look at a proposed modification to the database and return true if it should be denied, even if an [allow](#allow) rule says otherwise.
  * @param {String[]} options.fetch Optional performance enhancement. Limits the fields that will be fetched from the database for inspection by your `update` and `remove` functions.
