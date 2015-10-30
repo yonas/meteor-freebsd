@@ -215,6 +215,9 @@ Mongo.Collection = function (name, options) {
       throw new Error("There is already a collection named '" + name + "'");
   }
 
+  // XXX don't define these until allow or deny is actually used for this
+  // collection. Could be hard if the security rules are only defined on the
+  // server.
   self._defineMutationMethods();
 
   // autopublish
