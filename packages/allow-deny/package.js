@@ -17,6 +17,7 @@ Package.onUse(function(api) {
     'minimongo', // Just for LocalCollection.wrapTransform :[
     'check',
     'ejson',
+    'ddp',
   ]);
 
   api.addFiles('allow-deny.js');

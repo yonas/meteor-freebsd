@@ -378,6 +378,36 @@ CollectionPrototype._validatedRemove = function(userId, selector) {
   return self._collection.remove.call(self._collection, selector);
 };
 
+CollectionPrototype._callMutatorMethod = function _callMutatorMethod(name, args, callback) {
+  if (Meteor.isClient && !callback && !alreadyInSimulation()) {
+    // Client can't block, so it can't report errors by exception,
+    // only by callback. If they forget the callback, give them a
+    // default one that logs the error, so they aren't totally
+    // baffled if their writes don't work because their database is
+    // down.
+    // Don't give a default callback in simulation, because inside stubs we
+    // want to return the results from the local collection immediately and
+    // not force a callback.
+    callback = function (err) {
+      if (err)
+        Meteor._debug(name + " failed: " + (err.reason || err.stack));
+    };
+  }
+
+  // For two out of three mutator methods, the first argument is a selector
+  const firstArgIsSelector = name === "update" || name === "remove";
+  if (firstArgIsSelector && !alreadyInSimulation()) {
+    // If we're about to actually send an RPC, we should throw an error if
+    // this is a non-ID selector, because the mutation methods only allow
+    // single-ID selectors. (If we don't throw here, we'll see flicker.)
+    throwIfSelectorIsNotId(args[0], name);
+  }
+
+  const mutatorMethodName = this._prefix + name;
+  return this._connection.apply(
+    mutatorMethodName, args, { returnStubValue: true }, callback);
+}
+
 function transformDoc(validator, doc) {
   if (validator.transform)
     return validator.transform(doc);
@@ -450,4 +480,8 @@ function throwIfSelectorIsNotId(selector, methodName) {
   }
 };
 
-AllowDeny.throwIfSelectorIsNotId = throwIfSelectorIsNotId;
+// Determine if we are in a DDP method simulation
+function alreadyInSimulation() {
+  const enclosing = DDP._CurrentInvocation.get();
+  return enclosing && enclosing.isSimulation;
+}

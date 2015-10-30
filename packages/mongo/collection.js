@@ -474,7 +474,7 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
     // Don't generate the id if we're the client and the 'outermost' call
     // This optimization saves us passing both the randomSeed and the id
     // Passing both is redundant.
-    if (this._connection && this._connection !== Meteor.server) {
+    if (this._isRemoteCollection()) {
       const enclosing = DDP._CurrentInvocation.get();
       if (!enclosing) {
         generateId = false;
@@ -482,7 +482,7 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
     }
 
     if (generateId) {
-      doc._id = doc._id = this._makeNewID();
+      doc._id = this._makeNewID();
     }
   }
 
@@ -494,47 +494,18 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
     }
 
     // XXX what is this for??
+    // It's some iteraction between the callback to _callMutatorMethod and
+    // the return value conversion
     doc._id = result;
 
     return result;
   };
 
-  var wrappedCallback;
-  if (callback) {
-    wrappedCallback = function (error, result) {
-      callback(error, ! error && chooseReturnValueFromCollectionResult(result));
-    };
-  }
+  const wrappedCallback = wrapCallback(
+    callback, chooseReturnValueFromCollectionResult);
 
-  // XXX see #MeteorServerNull
   if (this._isRemoteCollection()) {
-    // just remote to another endpoint, propagate return value or
-    // exception.
-
-    if (Meteor.isClient && !wrappedCallback && !alreadyInSimulation()) {
-      // Client can't block, so it can't report errors by exception,
-      // only by callback. If they forget the callback, give them a
-      // default one that logs the error, so they aren't totally
-      // baffled if their writes don't work because their database is
-      // down.
-      // Don't give a default callback in simulation, because inside stubs we
-      // want to return the results from the local collection immediately and
-      // not force a callback.
-      wrappedCallback = function (err) {
-        if (err)
-          Meteor._debug(name + " failed: " + (err.reason || err.stack));
-      };
-    }
-
-    // Call mutator method
-    const mutatorMethodName = this._prefix + "insert";
-    const result = this._connection.apply(
-      mutatorMethodName,
-      [doc],
-      { returnStubValue: true },
-      wrappedCallback
-    );
-
+    const result = this._callMutatorMethod("insert", [doc], wrappedCallback);
     return chooseReturnValueFromCollectionResult(result);
   }
 
@@ -574,49 +545,16 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
     }
   }
 
-  var wrappedCallback;
-  if (callback) {
-    wrappedCallback = function (error, result) {
-      callback(error, ! error && result);
-    };
-  }
+  const wrappedCallback = wrapCallback(callback);
 
-  // XXX see #MeteorServerNull
   if (this._isRemoteCollection()) {
-    // just remote to another endpoint, propagate return value or
-    // exception.
-
-    if (Meteor.isClient && !wrappedCallback && ! alreadyInSimulation()) {
-      // Client can't block, so it can't report errors by exception,
-      // only by callback. If they forget the callback, give them a
-      // default one that logs the error, so they aren't totally
-      // baffled if their writes don't work because their database is
-      // down.
-      // Don't give a default callback in simulation, because inside stubs we
-      // want to return the results from the local collection immediately and
-      // not force a callback.
-      wrappedCallback = function (err) {
-        if (err)
-          Meteor._debug(name + " failed: " + (err.reason || err.stack));
-      };
-    }
-
-    if (!alreadyInSimulation()) {
-      // If we're about to actually send an RPC, we should throw an error if
-      // this is a non-ID selector, because the mutation methods only allow
-      // single-ID selectors. (If we don't throw here, we'll see flicker.)
-      AllowDeny.throwIfSelectorIsNotId(selector, "update");
-    }
-
-    const mutatorMethodName = this._prefix + "update";
     const args = [
       selector,
       modifier,
       options
     ];
 
-    return this._connection.apply(
-      mutatorMethodName, args, { returnStubValue: true }, wrappedCallback);
+    return this._callMutatorMethod("update", args, wrappedCallback);
   }
 
   // it's my collection.  descend into the collection object
@@ -639,43 +577,10 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
 Mongo.Collection.prototype.remove = function remove(selector, callback) {
   selector = Mongo.Collection._rewriteSelector(selector);
 
-  var wrappedCallback;
-  if (callback) {
-    wrappedCallback = function (error, result) {
-      callback(error, ! error && result);
-    };
-  }
+  const wrappedCallback = wrapCallback(callback);
 
-  // XXX see #MeteorServerNull
   if (this._isRemoteCollection()) {
-    // just remote to another endpoint, propagate return value or
-    // exception.
-
-    if (Meteor.isClient && !wrappedCallback && !alreadyInSimulation()) {
-      // Client can't block, so it can't report errors by exception,
-      // only by callback. If they forget the callback, give them a
-      // default one that logs the error, so they aren't totally
-      // baffled if their writes don't work because their database is
-      // down.
-      // Don't give a default callback in simulation, because inside stubs we
-      // want to return the results from the local collection immediately and
-      // not force a callback.
-      wrappedCallback = function (err) {
-        if (err)
-          Meteor._debug(name + " failed: " + (err.reason || err.stack));
-      };
-    }
-
-    if (!alreadyInSimulation()) {
-      // If we're about to actually send an RPC, we should throw an error if
-      // this is a non-ID selector, because the mutation methods only allow
-      // single-ID selectors. (If we don't throw here, we'll see flicker.)
-      AllowDeny.throwIfSelectorIsNotId(selector, "remove");
-    }
-
-    const mutatorMethodName = this._prefix + "remove";
-    return this._connection.apply(
-      mutatorMethodName, [selector], { returnStubValue: true }, wrappedCallback);
+    return this._callMutatorMethod("remove", [selector], wrappedCallback);
   }
 
   // it's my collection.  descend into the collection object
@@ -694,16 +599,28 @@ Mongo.Collection.prototype.remove = function remove(selector, callback) {
   }
 };
 
-// Determine if we are in a DDP method simulation
-function alreadyInSimulation() {
-  const enclosing = DDP._CurrentInvocation.get();
-  return enclosing && enclosing.isSimulation;
-}
-
 // Determine if this collection is simply a minimongo representation of a real
 // database on another server
 Mongo.Collection.prototype._isRemoteCollection = function _isRemoteCollection() {
+  // XXX see #MeteorServerNull
   return this._connection && this._connection !== Meteor.server;
+}
+
+// Convert the callback to not return a result if there is an error
+function wrapCallback(callback, convertResult) {
+  if (!callback) {
+    return;
+  }
+
+  if (convertResult) {
+    return function (error, result) {
+      callback(error, ! error && convertResult(result));
+    };
+  } else {
+    return function (error, result) {
+      callback(error, ! error && result);
+    };
+  }
 }
 
 /**
