@@ -373,7 +373,7 @@ Mongo.Collection._rewriteSelector = function (selector) {
 
 // convert a JS RegExp object to a Mongo {$regex: ..., $options: ...}
 // selector
-var convertRegexpToMongoSelector = function (regexp) {
+function convertRegexpToMongoSelector(regexp) {
   check(regexp, RegExp); // safety belt
 
   var selector = {$regex: regexp.source};
@@ -429,31 +429,6 @@ var convertRegexpToMongoSelector = function (regexp) {
  * @param {Object} doc The document to insert. May not yet have an _id attribute, in which case Meteor will generate one for you.
  * @param {Function} [callback] Optional.  If present, called with an error object as the first argument and, if no error, the _id as the second.
  */
-
-/**
- * @summary Modify one or more documents in the collection. Returns the number of affected documents.
- * @locus Anywhere
- * @method update
- * @memberOf Mongo.Collection
- * @instance
- * @param {MongoSelector} selector Specifies which documents to modify
- * @param {MongoModifier} modifier Specifies how to modify the documents
- * @param {Object} [options]
- * @param {Boolean} options.multi True to modify all matching documents; false to only modify one of the matching documents (the default).
- * @param {Boolean} options.upsert True to insert a document if no matching documents are found.
- * @param {Function} [callback] Optional.  If present, called with an error object as the first argument and, if no error, the number of affected documents as the second.
- */
-
-/**
- * @summary Remove documents from the collection
- * @locus Anywhere
- * @method remove
- * @memberOf Mongo.Collection
- * @instance
- * @param {MongoSelector} selector Specifies which documents to remove
- * @param {Function} [callback] Optional.  If present, called with an error object as its argument.
- */
-
 Mongo.Collection.prototype.insert = function insert(doc, callback) {
   // Make sure we were passed a document to insert
   if (!doc) {
@@ -526,6 +501,19 @@ Mongo.Collection.prototype.insert = function insert(doc, callback) {
   }
 }
 
+/**
+ * @summary Modify one or more documents in the collection. Returns the number of affected documents.
+ * @locus Anywhere
+ * @method update
+ * @memberOf Mongo.Collection
+ * @instance
+ * @param {MongoSelector} selector Specifies which documents to modify
+ * @param {MongoModifier} modifier Specifies how to modify the documents
+ * @param {Object} [options]
+ * @param {Boolean} options.multi True to modify all matching documents; false to only modify one of the matching documents (the default).
+ * @param {Boolean} options.upsert True to insert a document if no matching documents are found.
+ * @param {Function} [callback] Optional.  If present, called with an error object as the first argument and, if no error, the number of affected documents as the second.
+ */
 Mongo.Collection.prototype.update = function update(selector, modifier, ...optionsAndCallback) {
   const callback = popCallbackFromArgs(optionsAndCallback);
 
@@ -574,6 +562,15 @@ Mongo.Collection.prototype.update = function update(selector, modifier, ...optio
   }
 }
 
+/**
+ * @summary Remove documents from the collection
+ * @locus Anywhere
+ * @method remove
+ * @memberOf Mongo.Collection
+ * @instance
+ * @param {MongoSelector} selector Specifies which documents to remove
+ * @param {Function} [callback] Optional.  If present, called with an error object as its argument.
+ */
 Mongo.Collection.prototype.remove = function remove(selector, callback) {
   selector = Mongo.Collection._rewriteSelector(selector);
 
@@ -632,16 +629,19 @@ function wrapCallback(callback, convertResult) {
  * @param {Boolean} options.multi True to modify all matching documents; false to only modify one of the matching documents (the default).
  * @param {Function} [callback] Optional.  If present, called with an error object as the first argument and, if no error, the number of affected documents as the second.
  */
-Mongo.Collection.prototype.upsert = function (selector, modifier,
-                                               options, callback) {
-  var self = this;
+Mongo.Collection.prototype.upsert = function upsert(
+    selector, modifier, options, callback) {
   if (! callback && typeof options === "function") {
     callback = options;
     options = {};
   }
-  return self.update(selector, modifier,
-              _.extend({}, options, { _returnObject: true, upsert: true }),
-              callback);
+
+  const updateOptions = _.extend({}, options, {
+    _returnObject: true,
+    upsert: true
+  });
+
+  return this.update(selector, modifier, updateOptions, callback);
 };
 
 // We'll actually design an index API later. For now, we just pass through to
