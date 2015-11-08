@@ -29,10 +29,11 @@ sudo mv meteor-freebsd /usr/local/share/meteor
 sudo ln -s /usr/local/share/meteor/meteor /usr/local/bin/meteor
 ```
 
-## Create an app
+## Create and launch an app
 ```bash
 meteor create myapp
 cd myapp
+meteor
 ```
 
 You'll then be able to read the docs locally in your browser at
