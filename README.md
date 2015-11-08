@@ -13,69 +13,26 @@ Documentation is available at http://docs.meteor.com/.
 
 Try the getting started [tutorial](https://www.meteor.com/try).
 
-## Quick Start
+## Install
+
+Install required packages:
+
+```bash
+sudo pkg install bash ca_root_nss curl expat gettext-runtime git-lite gmake indexinfo libevent2 libffi mongodb node npm pcre perl5 python2 python27 snappy v8
+```
 
 Install Meteor:
 
 ```bash
-curl https://install.meteor.com | /bin/sh
+git clone git://github.com/yonas/meteor-freebsd.git
+sudo mv meteor-freebsd /usr/local/share/meteor
+sudo ln -s /usr/local/share/meteor/meteor /usr/local/bin/meteor
 ```
 
-Create a project:
-
+## Create an app
 ```bash
-meteor create try-meteor
-```
-
-Run it:
-
-```bash
-cd try-meteor
-meteor
-```
-
-Deploy it to the world, for free:
-
-```bash
-meteor deploy try-meteor.meteor.com
-```
-
-## Slow Start (for developers)
-
-If you want to run on the bleeding edge, or help develop Meteor, you
-can run Meteor directly from a git checkout.
-
-```bash
-git clone git://github.com/meteor/meteor.git
-cd meteor
-```
-
-If you're the sort of person who likes to build everything from scratch,
-you can build all the Meteor dependencies (node.js, npm, mongodb, etc)
-with the provided script. This requires git, a C and C++ compiler,
-autotools, and scons. If you do not run this script, Meteor will
-automatically download pre-compiled binaries when you first run it.
-
-```bash
-# OPTIONAL
-./scripts/generate-dev-bundle.sh
-```
-
-Now you can run meteor directly from the checkout (if you did not
-build the dependency bundle above, this will take a few moments to
-download a pre-build version).
-
-```bash
-./meteor --help
-```
-
-From your checkout, you can read the docs locally. The `/docs` directory is a
-meteor application, so simply change into the `/docs` directory and launch
-the app:
-
-```bash
-cd docs/
-../meteor
+meteor create myapp
+cd myapp
 ```
 
 You'll then be able to read the docs locally in your browser at
@@ -84,15 +41,6 @@ You'll then be able to read the docs locally in your browser at
 Note that if you run Meteor from a git checkout, you cannot pin apps to specific
 Meteor releases or run using different Meteor releases using `--release`.
 
-## Uninstalling Meteor
-
-Aside from a short launcher shell script, Meteor installs itself inside your
-home directory. To uninstall Meteor, run:
-
-```bash
-rm -rf ~/.meteor/
-sudo rm /usr/local/bin/meteor
-```
 
 ## Developer Resources
 
