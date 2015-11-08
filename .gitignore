@@ -1,7 +1,7 @@
 .DS_Store
 /.meteor
 *~
-/dev_bundle
+#/dev_bundle
 /dev_bundle*.tar.gz
 /android_bundle
 /android_bundle*.tar.gz

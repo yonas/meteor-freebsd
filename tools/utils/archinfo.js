@@ -157,6 +157,16 @@ var host = function () {
         throw new Error("Unsupported architecture: " + machine);
     }
 
+    else if (platform === "freebsd") {
+      var machine = run('uname', '-m');
+      if (_.contains(["i386", "i686", "x86"], machine))
+        _host = "os.linux.x86_32";
+      else if (_.contains(["x86_64", "amd64", "ia64"], machine))
+        _host = "os.linux.x86_64";
+      else
+        throw new Error("Unsupported architecture: " + machine);
+    }
+
     else if (platform === "win32") {
       // We also use 32 bit builds on 64 bit Windows architectures.
       _host = "os.windows.x86_32";
