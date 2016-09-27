@@ -1,3 +1,8 @@
+# NOTE
+I recommend FreeBSD users take a look at https://github.com/4commerce-technologies-AG/meteor
+
+---
+
 # Meteor
 
 Meteor is an ultra-simple environment for building modern web
